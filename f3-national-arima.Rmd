@@ -9,10 +9,13 @@ knitr::opts_chunk$set(message=FALSE)
 
 ```{r setup}
 library(neonstore)
-library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
 library(tidyverse)
 library(tsibble)
 library(fable)
+library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
+
+source("R/iso_week.R")
+
 ```
 
 # A trivial ARIMA forecast
@@ -141,6 +144,9 @@ forecast <- national_model %>% group_by(time, statistic) %>%
 
 
 
+```{r}
+forecast <- forecast %>% mutate(time = iso_week(time) )
+```
 
 
 
@@ -169,5 +175,5 @@ eml_file <- neon4cast::write_metadata_eml(forecast_file,
 
 
 ```{r}
-submit(forecast_file, metadata = eml_file)
+neon4cast::submit(forecast_file, metadata = eml_file)
 ```

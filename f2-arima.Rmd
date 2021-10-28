@@ -9,10 +9,14 @@ knitr::opts_chunk$set(message=FALSE)
 
 ```{r setup}
 library(neonstore)
-library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
 library(tidyverse)
 library(tsibble)
 library(fable)
+library(ISOweek)
+library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
+
+source("R/flat_format.R")
+source("R/iso_week.R")
 ```
 
 # A trivial ARIMA forecast
@@ -38,7 +42,7 @@ targets <-
 past <-  targets
 forecast_date <- Sys.Date() 
 
-forecast_date <- as.Date("2021-05-01")
+forecast_date <- as.Date("2021-06-01")
 past <-  targets %>% filter(time < forecast_date)
 ```
 
@@ -67,6 +71,20 @@ arima_forecast <- inner_join(arima_richness, arima_abundance) %>% select(!.model
 forecast <- inner_join(arima_richness, arima_abundance) %>% select(!.model)
 
 ```
+Dates must be expressed as the Monday of the week the sampling would be performed.  
+This way don't need to predict the precise day that the trap is collected, all traps
+collected in the same week will count as an observation made for that week.
+
+
+```{r}
+
+```
+
+
+```{r}
+forecast <- forecast %>% mutate(time = iso_week(time) )
+```
+
 
 ```{r}
 forecast_file <- glue::glue("{theme}-{date}-{team}.csv.gz",

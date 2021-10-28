@@ -20,7 +20,11 @@ library(fable)
 
 ```{r}
 ## uuid::UUIDgenerate()
-iteration_id <- "c2cb06c2-4bf3-4aa0-9690-1fdd098a7ac5"
+iteration_id <- uuid::UUIDgenerate()  #"c2cb06c2-4bf3-4aa0-9690-1fdd098a7ac5"
+
+#forecast_date <- Sys.Date()
+forecast_date <- as.Date("2021-07-01")
+
 ```
 
 ## Access Target Data
@@ -34,10 +38,6 @@ targets <-
 
 
 ```{r}
-past <-  targets
-forecast_date <- Sys.Date() 
-
-forecast_date <- as.Date("2021-06-01")
 past <-  targets %>% filter(time < forecast_date)
 ```
 
@@ -53,6 +53,9 @@ null_abundance <- past  %>%
   model(null = MEAN(abundance)) %>%
   forecast(h = "1 year")
 ```
+
+
+## Adjust prediction to ISOweek
 
 
 ## Visualize the forecast
@@ -72,9 +75,25 @@ The helper function `efi_format()` handles this transformation.
 
 ```{r}
 ## Combine richness and abundance forecasts. drop the 'model' column
-f1_forecast <- inner_join(efi_format(null_richness), 
+forecast <- inner_join(efi_format(null_richness), 
                             efi_format(null_abundance)) %>%
   select(!.model) # we can have only one model per file in EFI format
+```
+Dates must be expressed as the Monday of the week the sampling would be performed.  
+This way don't need to predict the precise day that the trap is collected, all traps
+collected in the same week will count as an observation made for that week.
+
+
+```{r}
+iso_week <- function(x){
+  monday <- gsub("\\d$", "1", ISOweek::date2ISOweek(x) )
+  ISOweek::ISOweek2date(monday)
+  }
+```
+
+
+```{r}
+forecast <- forecast %>% mutate(time = iso_week(time) )
 ```
 
 ```{r}
@@ -82,7 +101,7 @@ forecast_file <- glue::glue("{theme}-{date}-{team}.csv.gz",
                             theme = "beetles", 
                             date=forecast_date,
                             team = "cb_f1")
-write_csv(f1_forecast, forecast_file)
+write_csv(forecast, forecast_file)
 ```
 
 
