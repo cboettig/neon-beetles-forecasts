@@ -159,16 +159,8 @@ neon4cast::forecast_output_validator(forecast_file)
 ```
 
 
-```{r}
-yaml_meta <- neon4cast::create_model_metadata(forecast_file)
-eml_file <- neon4cast::write_metadata_eml(forecast_file, 
-                                          yaml_meta, 
-                                          forecast_issue_time = forecast_date, 
-                                          forecast_iteration_id = iteration_id)
-
-```
 
 
 ```{r}
-neon4cast::submit(forecast_file, metadata = eml_file)
+neon4cast::submit(forecast_file)
 ```
