@@ -41,7 +41,17 @@ past <-  targets_ts |>
   pivot_wider(names_from="variable", values_from="observation")
 ```
 
-## Compute a forecast
+
+
+
+## Process vs Noise
+
+
+As the f1 & f2 example plots above show, counts of abundance and richness at individual sites and weeks are pretty noisy, with lots of gaps and zeros and no strong visual pattern.  In contrast, if we average by month over all sites nationally, we see a strong and predictable seasonal pattern:
+While a hierarchical forecast could allow us to pool power across sites, a simple starting point might be to try and back out the site-level predictions based on a forecast of this strong seasonal pattern.  
+An ARIMA model is a good way to capture this periodic trend.
+We treat the sites as merely random draws from this national pool,
+weighted by the fraction that each site has contributed to the grand total observed richness.
 
 ```{r}
 national_ave <- past %>%
