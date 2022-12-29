@@ -15,33 +15,30 @@ library(fable)
 library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
 
 source("R/iso_week.R")
-
-```
-
-# A trivial ARIMA forecast
-
-
-```{r}
 team <- "cb_f3"
 
-forecast_date <- Sys.Date() 
-forecast_date <- as.Date("2021-07-01") # back-dated, but properly blind
-
-iteration_id <- uuid::UUIDgenerate() # "fdacebd2-4214-43c9-8986-4497f8b1fbeb"
 ```
+
 
 ## Access Target Data
 
 ```{r}
 targets <-
-  "https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz" %>% 
-  read_csv(col_types = "cDdd") %>% 
-  as_tsibble(index = time, key = siteID)
+  "https://data.ecoforecast.org/neon4cast-targets/beetles/beetles-targets.csv.gz" |> 
+  read_csv(show_col_types = FALSE) 
+
+#targets |> duplicates(index = datetime, key  = c(variable,site_id))
+
+targets_ts <- targets |> 
+  as_tsibble(index = datetime, key = c(variable,site_id))
 ```
 
 
 ```{r}
-past <-  targets %>% filter(time < forecast_date)
+forecast_date <- Sys.Date() - months(3)
+past <-  targets_ts |>
+  filter(datetime < forecast_date)  |>
+  pivot_wider(names_from="variable", values_from="observation")
 ```
 
 ## Compute a forecast
@@ -72,7 +69,7 @@ We will use log-transforms as a simple way to avoid the possibility of negative 
 ```{r}
 ave_richness <- national_ave %>%
   fill_gaps() %>%
-  model(arima = ARIMA(log(richness))) %>%
+  model(arima = ARIMA(log(richness + 1e-6))) %>%
   forecast(h = "1 year")
 
 ave_richness %>% autoplot(national_ave) + ggtitle("richness")
@@ -82,7 +79,7 @@ ave_richness %>% autoplot(national_ave) + ggtitle("richness")
 ```{r}
 ave_abund <- national_ave %>%
   fill_gaps() %>%
-  model(arima = ARIMA(log(abundance))) %>%
+  model(arima = ARIMA(log(abundance+1e-5))) %>%
   forecast(h = "1 year")
 
 ave_abund %>% autoplot(national_ave) + ggtitle("abundance")
@@ -94,7 +91,7 @@ weighted by the fraction that each site has contributed to the grand total obser
 ```{r}
 site_weights <- 
   past %>% as_tibble() %>% 
-  group_by(siteID) %>% 
+  group_by(site_id) %>% 
   summarise(richness_share = sum(richness, na.rm=TRUE),
             abundance_share = sum(abundance, na.rm=TRUE)) %>% 
   mutate(richness_share = richness_share / sum(richness_share),
@@ -109,15 +106,18 @@ national_model <- ave_richness %>%
     dplyr::mutate(sd = sqrt( distributional::variance( richness ) ) ) %>%
     dplyr::rename(mean = .mean) %>%
     dplyr::select(time, .model, mean, sd) %>%
-    tidyr::pivot_longer(c(mean, sd), names_to = "statistic", values_to = "richness") %>%
+    tidyr::pivot_longer(c(mean, sd), names_to = "parameter", values_to = "richness") %>%
     dplyr::as_tibble()
 
 national_model <-  ave_abund %>% 
     dplyr::mutate(sd = sqrt( distributional::variance( abundance ) ) ) %>%
     dplyr::rename(mean = .mean) %>%
     dplyr::select(time, .model, mean, sd) %>%
-    tidyr::pivot_longer(c(mean, sd), names_to = "statistic", values_to = "abundance") %>%
-    dplyr::as_tibble() %>% inner_join(national_model)
+    tidyr::pivot_longer(c(mean, sd),
+                        names_to = "parameter",
+                        values_to = "abundance") %>%
+    dplyr::as_tibble() %>% 
+  inner_join(national_model)
 ```
 
 
@@ -126,21 +126,27 @@ Combining the forecast for the nation-wide pooled mean richness with the site-by
 
 
 ```{r}
-forecast <- national_model %>% group_by(time, statistic) %>% 
+forecast <- national_model %>% group_by(time, parameter) %>% 
   dplyr::group_map(~ mutate(site_weights, 
                             richness = richness_share * .x$richness, 
                             abundance = abundance_share * .x$abundance,
-                            statistic = .y$statistic, 
-                            time = .y$time)) %>%
+                            parameter = .y$parameter, 
+                            datetime = .y$time)) %>%
   bind_rows() %>%
-  select(time, siteID, statistic, abundance, richness) %>% 
-  mutate(time = as.Date(time))
+  select(datetime, site_id, parameter, abundance, richness) %>% 
+  mutate(datetime = as.Date(datetime), family="normal") |>
+  pivot_longer(c(abundance, richness),
+               names_to="variable",
+               values_to="prediction") 
 ```
 
 Convert time measures to iso_week
 
 ```{r}
-forecast <- forecast %>% mutate(time = iso_week(time) )
+forecast <- forecast %>%
+  mutate(datetime = iso_week(datetime),
+         reference_datetime = forecast_date,
+         parameter = forcats::fct_recode(parameter, mu="mean", sigma = "sd"))
 ```
 
 
@@ -164,3 +170,7 @@ neon4cast::forecast_output_validator(forecast_file)
 ```{r}
 neon4cast::submit(forecast_file)
 ```
+```{r}
+unlink(forecast_file)
+```
+

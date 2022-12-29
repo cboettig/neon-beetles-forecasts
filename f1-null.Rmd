@@ -12,6 +12,7 @@ library(neonstore)
 library(neon4cast) # remotes::install_github("eco4cast/neon4cast", dep=TRUE)
 library(tidyverse)
 library(tsibble)
+library(lubridate)
 library(fable)
 ```
 
@@ -22,8 +23,7 @@ library(fable)
 ## uuid::UUIDgenerate()
 iteration_id <- uuid::UUIDgenerate()  #"c2cb06c2-4bf3-4aa0-9690-1fdd098a7ac5"
 
-#forecast_date <- Sys.Date()
-forecast_date <- as.Date("2021-07-01")
+forecast_date <- Sys.Date() - months(3)
 
 ```
 
@@ -31,16 +31,19 @@ forecast_date <- as.Date("2021-07-01")
 
 ```{r}
 targets <-
-  "https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz" %>% 
-  read_csv(col_types = "cDdd") 
+  "https://data.ecoforecast.org/neon4cast-targets/beetles/beetles-targets.csv.gz" %>% 
+  read_csv(show_col_types = FALSE) 
+
+#targets %>% duplicates(index = datetime, key  = c(variable,site_id))
 
 targets_ts <- targets %>% 
-  as_tsibble(index = time, key = siteID)
+  as_tsibble(index = datetime, key = c(variable,site_id))
 ```
 
 
 ```{r}
-past <-  targets_ts %>% filter(time < forecast_date)
+past <-  targets_ts %>% filter(datetime < forecast_date) |>
+  pivot_wider(names_from="variable", values_from="observation")
 ```
 
 ## Compute a forecast
@@ -63,10 +66,12 @@ null_abundance <- past  %>%
 ## Visualize the forecast
 
 ```{r}
-first4 <- unique(null_richness$siteID)[1:4]
+first4 <- unique(null_richness$site_id)[1:4]
 
-null_richness %>% filter(siteID %in% first4)  %>% autoplot(past) + ggtitle("richness")
-null_abundance %>% filter(siteID %in% first4)  %>% autoplot(past) + ggtitle("abundance")
+null_richness %>% filter(site_id %in% first4)  %>% 
+  autoplot(past) + ggtitle("richness")
+null_abundance %>% filter(site_id %in% first4)  %>% 
+  autoplot(past) + ggtitle("abundance")
 ```
 
 ## EFI Formatting
@@ -77,7 +82,7 @@ The helper function `efi_format()` handles this transformation.
 
 ```{r}
 ## Combine richness and abundance forecasts
-forecast_raw <- inner_join(efi_format(null_richness), 
+forecast_raw <- bind_rows(efi_format(null_richness), 
                             efi_format(null_abundance)) 
 ```
 Dates must be expressed as the Monday of the week the sampling would be performed.  
@@ -94,7 +99,13 @@ iso_week <- function(x){
 
 
 ```{r}
-forecast <- forecast_raw %>% mutate(time = iso_week(time) )
+forecast <- forecast_raw %>% mutate(datetime = iso_week(datetime) )
+```
+
+```{r}
+scores <- neon4cast::score(forecast, targets)
+
+scores |> filter(!is.na(observation))
 ```
 
 
