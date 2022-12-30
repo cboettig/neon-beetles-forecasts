@@ -65,7 +65,7 @@ null_abundance <- past  |>
 first4 <- unique(null_richness$site_id)[1:4]
 
 null_richness |> filter(site_id %in% first4)  |> autoplot(past) + ggtitle("richness")
-null_abundance |> filter(site_id %in% first4)  |> autoplot(targets) + ggtitle("abundance")
+null_abundance |> filter(site_id %in% first4)  |> autoplot(past) + ggtitle("abundance")
 ```
 
 ## Score the forecast
