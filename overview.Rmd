@@ -49,12 +49,12 @@ future <- targets_ts |>
 
 ```{r}
 ## Compute a simple mean/sd model per site... obviously silly given huge seasonal aspect
-null_richness <- past  %>% 
-  model(null = MEAN(richness)) %>%
+null_richness <- past  |> 
+  model(null = MEAN(richness)) |>
   forecast(h = "1 year")
 
-null_abundance <- past  %>%
-  model(null = MEAN(abundance)) %>%
+null_abundance <- past  |>
+  model(null = MEAN(abundance)) |>
   forecast(h = "1 year")
 ```
 
@@ -64,8 +64,8 @@ null_abundance <- past  %>%
 ```{r}
 first4 <- unique(null_richness$site_id)[1:4]
 
-null_richness %>% filter(site_id %in% first4)  %>% autoplot(past) + ggtitle("richness")
-null_abundance %>% filter(site_id %in% first4)  %>% autoplot(targets) + ggtitle("abundance")
+null_richness |> filter(site_id %in% first4)  |> autoplot(past) + ggtitle("richness")
+null_abundance |> filter(site_id %in% first4)  |> autoplot(targets) + ggtitle("abundance")
 ```
 
 ## Score the forecast
@@ -79,7 +79,7 @@ Recall that smaller CRPS scores are better.
   
 
 ```{r}
-null_richness %>%
+null_richness |>
   accuracy(future, list(crps = CRPS))
 ```
 
@@ -99,163 +99,22 @@ Score the forecast using EFI's internal method. By default, EFI's method reports
 It is easy to later average across times for a by-site score.
 
 ```{r}
-scores_null <- neon4cast::score(null_forecast, targets)
+scores_null <- neon4cast::score(null_forecast, targets) |> filter(!is.na(observation))
 # average richness scores by site
-scores_null %>% group_by(target) %>% summarise(mean = mean(crps, na.rm=TRUE))
+summary_scores <- scores_null |> 
+  mutate(month = lubridate::month(datetime,label=TRUE)) |>
+  group_by(variable,month) |>
+  summarise(crps = mean(crps, na.rm=TRUE),
+            logs = mean(logs, na.rm=TRUE),
+            .groups = "drop") |>
+  pivot_longer(c(crps, logs), names_to="metric", values_to="score")
+
+summary_scores |>
+  ggplot(aes(month, score)) + geom_col() +
+  facet_grid(variable ~ metric, scales = "free_y")
 ```
 
 
-# Richer models: ARIMA
 
 
-ARIMA models are commonly used to predict future values from historical values, ([FPP Ch 9](https://otexts.com/fpp3/arima.html)).  A simple ARIMA model does not use any external driver variables, though it is possible to include regression (e.g. see [FPP Ch 10 on Dynamic Models](https://otexts.com/fpp3/dynamic.html))
 
-
-Our ARIMA model needs only one extra step, making implicit missing data into explicit missing values.  In both richness and abundance, we will treat gaps as missing data, not as zeros, using `
-
-```{r}
-gap_filled <- tsibble::fill_gaps(past)
-arima_richness <- gap_filled  %>% 
-  model(arima = ARIMA(richness)) %>%
-  forecast(h = "1 year") %>%
-  efi_format()
-
-arima_abundance <- gap_filled  %>%
-  model(arima = ARIMA(abundance)) %>%
-  forecast(h = "1 year") %>%
-  efi_format()
-
-## Combine richness and abundance forecasts. drop the 'model' column
-arima_forecast <- inner_join(arima_richness, arima_abundance) %>% select(!.model)
-```
-Score the forecast
-
-```{r}
-arima_scores <- neon4cast::score(arima_forecast, "beetles")
-arima_scores %>% group_by(target) %>% summarise(mean = mean(crps, na.rm=TRUE))
-```
-
-# Including additional driver data
-
-
-## NOAA data access
-
-
-```{r}
-```
-
-## NEON weather data
-
-We can also use NEON's local measurements of the meteorological variables.
-NEON's permanent sites make convenient summary weather data available.  
-
-
-```{r}
-# One-time commands for import and storage of weather data
-neon_download("DP4.00001.001")
-neon_store(product="DP4.00001.001")
-```
-
-
-```{r}
-## Weather files can get big! We'll use a remote database connection
-db <- neon_db()
-
-## View available tables under this product ID
-tables <- DBI::dbListTables(db)
-tables[grepl("DP4.00001.001", tables)]
-
-## Create remote connections to these tables
-temp <- tbl(db, "wss_daily_temp-basic-DP4.00001.001")
-
-# Similarly we could grab other tables of interest
-precip <- tbl(db, "wss_daily_precip-basic-DP4.00001.001")
-humid <- tbl(db, "wss_daily_humid-basic-DP4.00001.001")
-
-## Determine which sites we have data for
-fixed_sites <- temp %>% select(site_id) %>% distinct() %>% pull()
-```
-
-Using `duckdb` date manipulation (`strftime`) and dplyr SQL translation, we can very quickly compute weekly averages on disk:
-
-```{r}
-temp <- tbl(db, "wss_daily_temp-basic-DP4.00001.001")
-weekly_temp <- 
-  temp %>% 
-  mutate(time = as.Date(date_trunc("week", date))) %>% 
-  group_by(time, site_id) %>% 
-  summarise(mean_temp = mean(wssTempTripleMean, na.rm=TRUE),
-            min_temp = mean(wssTempTripleMinimum, na.rm=TRUE),
-            max_temp = mean(wssTempTripleMaximum, na.rm=TRUE),
-            .groups = "drop") %>% 
-  collect() %>% # Now import summarized results into R, turn into tsibble:
-  as_tsibble(index=time, key=site_id)
-
-```
-
-All though the DP4 weather data covers only the permanent sites, we can just easily compute weekly means over the low-level triple-aspirated mean temperature data collected at all sites ourselves.  (Note this could be easily modified to group by day first to compute daily minimum and daily maximums):
-
-```{r}
-weekly_taat <- 
-   tbl(db, "TAAT_30min-basic-DP1.00003.001") %>% 
-  mutate(time = as.Date(date_trunc("week", startDateTime))) %>% 
-  group_by(time, site_id) %>% 
-  summarise(mean_temp = mean(tempTripleMean, na.rm=TRUE),
-            .groups = "drop") %>% 
-  collect() %>% # Now import summarized results into R, turn into tsibble:
-  as_tsibble(index=time, key=site_id)
-
-```
-
-
-## Regression models
-
-Is there any correlation between abundance and temperature? 
-
-
-```{r}
-past_w_covars <- left_join(past, weekly_temp)
-```
-
-We can try a simple time series linear model regression on min, max, and mean daily temperatures:
-(For simplicity we just use fixed sites, though as noted above it would be straightforward to compute daily min and max temp for all sites).
-
-```{r}
-report <- past_w_covars %>% 
-  filter(site_id %in% fixed_sites) %>% 
-  model(mean = TSLM(abundance ~ mean_temp),
-        max = TSLM(abundance ~ max_temp),
-        min = TSLM(abundance ~ min_temp)
-        ) %>%
-  report()
-
-report
-```
-
-
-```{r}
-report %>% 
-  filter(p_value < 0.05) %>% 
-  count(.model)
-```
-
-
-We can try a forecast based on this regression pattern of daily mean.  This will of course need future values of mean_temp predictor variable.  Typically, that 'new data' would most likely be based on the NOAA forecast for temperatures at each site, as mentioned above.  As we have withheld the last year of data for this example, we can simply use the data NEON measured at the site for testing purposes here:
-
-```{r}
-
-new_data <- weekly_temp %>% filter(time > forecast_date, site_id %in% fixed_sites)
-
-tslm_abundance <-  past_w_covars %>%
-  filter(site_id %in% fixed_sites)  %>% 
-  model(mean = TSLM(abundance ~ mean_temp)) %>%
-  forecast(h = "1 year", new_data = new_data)
-```
-
-The resulting skill seems comparable to the mean; perhaps not surprising since few of the site-wise correlations were significant.
-
-```{r}
-
-tslm_abundance %>% accuracy(future, list(crps = CRPS)) 
-
-```

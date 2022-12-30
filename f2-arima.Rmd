@@ -24,6 +24,11 @@ source("R/iso_week.R")
 # A trivial ARIMA forecast
 
 
+ARIMA models are commonly used to predict future values from historical values, ([FPP Ch 9](https://otexts.com/fpp3/arima.html)).  A simple ARIMA model does not use any external driver variables, though it is possible to include regression (e.g. see [FPP Ch 10 on Dynamic Models](https://otexts.com/fpp3/dynamic.html))
+
+
+Our ARIMA model needs only one extra step, making implicit missing data into explicit missing values.  In both richness and abundance, we will treat gaps as missing data, not as zeros.
+
 ```{r}
 team <- "cb_f2"
 ## uuid::UUIDgenerate()
